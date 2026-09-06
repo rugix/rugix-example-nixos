@@ -1,48 +1,33 @@
 {
-  config,
-  pkgs,
   lib,
+  modulesPath,
+  pkgs,
   ...
 }:
 
 {
-  system.stateVersion = config.system.nixos.release;
-  networking.hostName = "appliance";
-
   imports = [
-    ./desktop.nix
+    (modulesPath + "/profiles/minimal.nix")
+    (modulesPath + "/profiles/perlless.nix")
     ./image.nix
-    ./size-reduction.nix
     ./update.nix
     ./update-package.nix
   ];
 
-  boot.plymouth = {
-    enable = true;
-    logo = ./plymouth.png;
-  };
+  # Keep this fixed when upgrading NixOS on devices with existing state.
+  system.stateVersion = "26.05";
+  networking.hostName = "appliance";
 
-  services.getty.helpLine = ''
-    ███╗   ██╗██╗██╗  ██╗ ██████╗ █████╗ ██████╗ ███████╗███╗   ███╗██╗   ██╗
-    ████╗  ██║██║╚██╗██╔╝██╔════╝██╔══██╗██╔══██╗██╔════╝████╗ ████║╚██╗ ██╔╝
-    ██╔██╗ ██║██║ ╚███╔╝ ██║     ███████║██║  ██║█████╗  ██╔████╔██║ ╚████╔╝
-    ██║╚██╗██║██║ ██╔██╗ ██║     ██╔══██║██║  ██║██╔══╝  ██║╚██╔╝██║  ╚██╔╝
-    ██║ ╚████║██║██╔╝ ██╗╚██████╗██║  ██║██████╔╝███████╗██║ ╚═╝ ██║   ██║
-    ╚═╝  ╚═══╝╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝     ╚═╝   ╚═╝
+  environment.systemPackages = [ pkgs.curl ];
 
-          -={ Applicance version ${config.system.image.version} }=-
-
-      rugix-ctrl system info          Show system info
-      rugix-ctrl update install URL   Install update from URL
-      rugix-ctrl system commit        Commit current boot group
-      parted -l                       Show partition layout
-  '';
-  services.getty.autologinUser = "root";
-  users.users.root.initialPassword = "";
-
-  environment.systemPackages = [
-    pkgs.parted
-  ];
+  system.disableInstallerTools = true;
+  programs.nano.enable = false;
+  programs.fuse.enable = false;
+  security.sudo.enable = false;
+  # The example intentionally ships without administrator credentials. This
+  # acknowledges the resulting NixOS lockout assertion; it does not unlock the
+  # root account or assign an empty password.
+  users.allowNoPasswordLogin = true;
 
   system.image.version = lib.mkDefault "1";
   nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rugix Python Web Server</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+        background: #f4f6f8;
+        color: #17202a;
+      }
+
+      body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+      }
+
+      main {
+        width: min(36rem, calc(100% - 3rem));
+        border: 1px solid #d7dee5;
+        border-radius: 0.75rem;
+        background: #fff;
+        padding: 2rem;
+        box-shadow: 0 1rem 2.5rem rgb(23 32 42 / 10%);
+      }
+
+      h1 {
+        margin: 0 0 1rem;
+        font-size: clamp(2rem, 8vw, 3rem);
+        line-height: 1.05;
+      }
+
+      p {
+        margin: 0.5rem 0 0;
+        color: #52616f;
+        line-height: 1.6;
+      }
+
+      .eyebrow {
+        margin: 0 0 0.5rem;
+        color: #087f5b;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          background: #111820;
+          color: #f7f9fa;
+        }
+
+        main {
+          border-color: #34414d;
+          background: #1b2630;
+          box-shadow: none;
+        }
+
+        p {
+          color: #bdc8d1;
+        }
+
+        .eyebrow {
+          color: #63e6be;
+        }
+      }
+    </style>
+  </head>
+  <body data-app-version="@APP_VERSION@" data-start-count="@START_COUNT@">
+    <main>
+      <p class="eyebrow">Rugix Apps Example</p>
+      <h1>Python web server</h1>
+      <p>Application version <strong>@APP_VERSION@</strong></p>
+      <p>Persistent container starts: <strong>@START_COUNT@</strong></p>
+    </main>
+  </body>
+</html>

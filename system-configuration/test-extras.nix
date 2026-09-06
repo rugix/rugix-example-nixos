@@ -13,24 +13,24 @@
     (builtins.readFile ../tests/test-key.pub)
   ];
 
-  services.xserver.enable = lib.mkForce false;
-  services.greetd.enable = lib.mkForce false;
-  boot.plymouth.enable = lib.mkForce false;
+  # The test appliance reaches its update server through the single-label
+  # hostname handed out over DHCP.
+  services.resolved.settings.Resolve.ResolveUnicastSingleLabel = true;
 
-  # --- Test/demo speed-ups (do not affect the production image) ---
+  # Test speed-ups do not affect the production image.
 
   image.repart.partitions = {
     # The real image pads each A/B store partition to 2G for headroom, but
-    # the test image is only ~320M. Shrinking the partitions makes the full
-    # update bundle (and thus `rugix-ctrl update install`) a few hundred MB
-    # instead of 2G, which dominates the test runtime.
+    # the test image is well below 768M. Shrinking the partitions makes the
+    # full update bundle smaller than the production artifact while retaining
+    # room for the Docker and Python runtime in the immutable Nix store.
     nix-store-a.repartConfig = {
-      SizeMinBytes = lib.mkForce "512M";
-      SizeMaxBytes = lib.mkForce "512M";
+      SizeMinBytes = lib.mkForce "768M";
+      SizeMaxBytes = lib.mkForce "768M";
     };
     nix-store-b.repartConfig = {
-      SizeMinBytes = lib.mkForce "512M";
-      SizeMaxBytes = lib.mkForce "512M";
+      SizeMinBytes = lib.mkForce "768M";
+      SizeMaxBytes = lib.mkForce "768M";
     };
 
     # Boot the default/one-shot entry immediately. Once a second UKI exists

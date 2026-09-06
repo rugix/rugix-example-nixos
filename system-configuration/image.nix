@@ -40,42 +40,13 @@
   # systemd-boot) to determine which A/B group was booted, then creates
   # a mount unit for the corresponding nix-store partition.
   boot.initrd.systemd.contents."/etc/systemd/system-generators/mount-nix-store" = {
-    source = pkgs.writeScript "mount-nix-store-generator" ''
-      #!/bin/sh
-      NORMAL_DIR="$1"
-
-      EFI_VAR="/sys/firmware/efi/efivars/LoaderEntrySelected-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
-      GROUP="a"
-      if [ -f "$EFI_VAR" ]; then
-        ENTRY=$(dd if="$EFI_VAR" bs=1 skip=4 2>/dev/null | tr -d '\0')
-        case "$ENTRY" in
-          nixos-b.efi) GROUP="b" ;;
-        esac
-      fi
-
-      cat > "$NORMAL_DIR/sysroot-nix-store.mount" << EOF
-      [Unit]
-      Description=Mount NixOS Store (group $GROUP)
-      After=sysroot.mount
-      Before=initrd-fs.target
-
-      [Mount]
-      What=/dev/disk/by-partlabel/nix-store-$GROUP
-      Where=/sysroot/nix/store
-      Type=squashfs
-      Options=ro
-      EOF
-
-      mkdir -p "$NORMAL_DIR/initrd-fs.target.wants"
-      ln -s ../sysroot-nix-store.mount "$NORMAL_DIR/initrd-fs.target.wants/"
-    '';
+    source = pkgs.writeScript "mount-nix-store-generator" (builtins.readFile ./mount-nix-store.sh);
   };
 
   # Enable serial console for headless/QEMU testing.
   boot.kernelParams = [ "console=ttyS0,115200" ];
 
   system.image.id = "appliance";
-  system.nixos.distroName = "NixcademyOS";
 
   # Use a fixed UKI filename (no version suffix) so it's group-agnostic.
   system.boot.loader.ukiFile = lib.mkForce "nixos.efi";
@@ -115,7 +86,7 @@
 
         nix-store-a = {
           storePaths = [ config.system.build.toplevel ];
-          stripNixStorePrefix = true;
+          nixStorePrefix = "/";
           repartConfig = {
             Type = "linux-generic";
             Label = "nix-store-a";

@@ -1,56 +1,85 @@
 {
-  pkgs,
-  ...
-}:
+  services.rugix = {
+    enable = true;
+    apps.enable = true;
+    apps.dockerCompose.enable = true;
 
-{
-  environment.systemPackages = [ pkgs.rugix-ctrl ];
+    daemon = {
+      enable = true;
+      features = {
+        systemCommit = true;
+        systemReboot = true;
+        appLifecycle = true;
+      };
+    };
 
-  # The appliance reaches its update server by the (short) hostname handed
-  # out over DHCP, e.g. `rugix-ctrl update install http://update-server/...`.
-  # systemd-resolved refuses to send single-label names like `update-server`
-  # to upstream DNS by default, so name resolution would fail. Allow it.
-  # (Use a fully-qualified name and you don't need this.)
-  services.resolved.extraConfig = "ResolveUnicastSingleLabel=yes";
+    settings = {
+      config-partition.disabled = true;
+      data-partition.disabled = true;
 
-  environment.etc."rugix/system.toml" = {
-    text = ''
-      [config-partition]
-      disabled = true
+      boot-flow = {
+        type = "systemd-boot";
+        entries = {
+          a = "nixos-a.efi";
+          b = "nixos-b.efi";
+        };
+      };
 
-      [data-partition]
-      disabled = true
+      slots = {
+        system-a = {
+          type = "block";
+          partition = 2;
+          immutable = true;
+        };
+        system-b = {
+          type = "block";
+          partition = 3;
+          immutable = true;
+        };
+        boot-a = {
+          type = "file";
+          path = "/boot/EFI/Linux/nixos-a.efi";
+        };
+        boot-b = {
+          type = "file";
+          path = "/boot/EFI/Linux/nixos-b.efi";
+        };
+      };
 
-      [boot-flow]
-      type = "systemd-boot"
-      [boot-flow.entries]
-      a = "nixos-a.efi"
-      b = "nixos-b.efi"
-
-      [slots.system-a]
-      type = "block"
-      partition = 2
-      immutable = true
-
-      [slots.system-b]
-      type = "block"
-      partition = 3
-      immutable = true
-
-      [slots.boot-a]
-      type = "file"
-      path = "/boot/EFI/Linux/nixos-a.efi"
-
-      [slots.boot-b]
-      type = "file"
-      path = "/boot/EFI/Linux/nixos-b.efi"
-
-      [boot-groups.a]
-      slots = { system = "system-a", boot = "boot-a" }
-
-      [boot-groups.b]
-      slots = { system = "system-b", boot = "boot-b" }
-    '';
+      boot-groups = {
+        a.slots = {
+          system = "system-a";
+          boot = "boot-a";
+        };
+        b.slots = {
+          system = "system-b";
+          boot = "boot-b";
+        };
+      };
+    };
   };
 
+  services.rugix-admin.enable = true;
+
+  services.nexigon-agent = {
+    enable = true;
+    provisioning = {
+      enable = true;
+      openFirewall = true;
+    };
+    settings = {
+      exports = [
+        {
+          protocol = "http";
+          name = "rugix-admin";
+          port = 7492;
+        }
+        {
+          protocol = "http";
+          name = "python-web-server";
+          port = 8080;
+        }
+      ];
+    };
+  };
 }

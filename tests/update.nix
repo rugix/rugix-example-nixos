@@ -1,4 +1,6 @@
 {
+  app-v1-bundle,
+  app-v2-bundle,
   image-test,
   v2-bundle,
   v3-delta-bundle,
@@ -10,6 +12,10 @@
 
   globalTimeout = 1800;
 
+  # Give the interactive driver an out-of-band SSH route to the raw appliance
+  # without changing the automated test or the production appliance image.
+  interactive.sshBackdoor.enable = true;
+
   nodes = {
     # `pkgs` here is the server node's own package set, so the
     # `ssh-to-appliance` wrapper is built for the server's platform.
@@ -20,7 +26,8 @@
       let
         ssh-to-appliance = pkgs.writeShellScriptBin "ssh-to-appliance" ''
           exec ${pkgs.openssh}/bin/ssh \
-            -i /root/test-key \
+            -F /dev/null \
+            -i /etc/ssh-to-appliance-key \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null \
             -o LogLevel=ERROR \
@@ -31,21 +38,27 @@
       in
       {
         environment.systemPackages = [ ssh-to-appliance ];
+        environment.etc."ssh-to-appliance-key" = {
+          source = ./test-key;
+          mode = "0600";
+        };
 
         services.nginx = {
           enable = true;
           virtualHosts."default" = {
             default = true;
-            # we're serving essentially the next updates.
             root = pkgs.runCommand "rugix-www" { } ''
-              mkdir -p $out
-              ln -s ${v2-bundle}/update.rugixb       $out/update.rugixb
-              ln -s ${v3-delta-bundle}/update.rugixb $out/update-delta.rugixb
+              mkdir -p "$out"
+              ln -s ${app-v1-bundle}/python-web-server.rugixb "$out/python-web-app-v1.rugixb"
+              ln -s ${app-v1-bundle}/python-web-server.rugixb-hash "$out/python-web-app-v1.rugixb-hash"
+              ln -s ${app-v2-bundle}/python-web-server.rugixb "$out/python-web-app-v2.rugixb"
+              ln -s ${app-v2-bundle}/python-web-server.rugixb-hash "$out/python-web-app-v2.rugixb-hash"
+              ln -s ${v2-bundle}/update.rugixb "$out/update.rugixb"
+              ln -s ${v3-delta-bundle}/update.rugixb "$out/update-delta.rugixb"
             '';
           };
         };
 
-        # our embedded system assumes DHCP
         services.dnsmasq = {
           enable = true;
           settings = {
@@ -101,70 +114,7 @@
     };
   };
 
-  testScript = ''
-    import json
-
-    # ════════════════════════════════════════════════════════════════════
-    # Prologue: a small Python helper library
-    #
-    # The appliance is a headless production A/B image with no NixOS test
-    # instrumentation of its own, so the driver cannot run commands on it
-    # directly. Everything below reaches it over SSH *from the server*,
-    # which shares the appliance's private DHCP network. These helpers hide
-    # that indirection so the real test (further down) reads like English.
-    # ════════════════════════════════════════════════════════════════════
-
-    def ssh(command, timeout=120):
-        """Run a shell command on the appliance and return its stdout."""
-        return server.succeed(f"ssh-to-appliance -- {command}", timeout=timeout)
-
-    def wait_ssh(timeout=300):
-        """Block until the appliance accepts SSH logins again."""
-        server.wait_until_succeeds("ssh-to-appliance -- true", timeout=timeout)
-
-    def boot_info():
-        """Return rugix's view of the A/B groups.
-
-        The "boot" object of `rugix-ctrl system info` carries:
-          activeGroup  - the group we are running right now
-          defaultGroup - the group the firmware boots normally next time
-        """
-        return json.loads(ssh("rugix-ctrl system info"))["boot"]
-
-    def install_update(url):
-        """Download a bundle and write it into the *inactive* A/B slot.
-
-        `--reboot no` leaves the reboot to us. The bundle is unsigned and
-        served over a trusted private network, hence skip-verification.
-        """
-        ssh(
-            f"rugix-ctrl update install {url} "
-            "--insecure-skip-bundle-verification --reboot no",
-            timeout=900,
-        )
-
-    def reboot_into_spare():
-        """Reboot once into the freshly-updated 'spare' group.
-
-        rugix arms a *one-shot* systemd-boot entry, so the spare group boots
-        exactly once; if it never reaches `system commit`, the firmware falls
-        back to the committed default — that is the automatic rollback. SSH
-        drops while the appliance reboots, so the command returns non-zero;
-        we ignore that and wait for SSH to come back.
-        """
-        server.execute("ssh-to-appliance -- rugix-ctrl system reboot --spare", timeout=20)
-        server.sleep(15)
-        wait_ssh()
-
-    def reboot_and_commit(expected_group):
-        """Reboot into the spare group, sanity-check it, and make it permanent."""
-        reboot_into_spare()
-        assert boot_info()["activeGroup"] == expected_group
-        ssh("mount | grep -q squashfs")  # the store really is the squashfs slot
-        ssh("rugix-ctrl system commit")
-        assert boot_info()["defaultGroup"] == expected_group
-
-
+  testScript = builtins.readFile ./interactive.py + ''
     # ════════════════════════════════════════════════════════════════════
     # The real test follows here.
     #
@@ -173,47 +123,91 @@
     #   v1 (group a) --full bundle--> v2 (group b) --delta bundle--> v3 (group a)
     # ════════════════════════════════════════════════════════════════════
 
-    def test_server_hosts_both_bundles():
-        with subtest("server hosts the v2 full and v3 delta bundles"):
+    def test_server_hosts_all_bundles():
+        """Verify that the update server exposes every lifecycle artifact."""
+        with subtest("server hosts both apps, the v2 full bundle, and the v3 delta"):
+            server.succeed("curl -fsSI http://localhost/python-web-app-v1.rugixb")
+            server.succeed("curl -fsSI http://localhost/python-web-app-v2.rugixb")
             server.succeed("curl -fsSI http://localhost/update.rugixb")
             server.succeed("curl -fsSI http://localhost/update-delta.rugixb")
 
     def test_initial_image_boots_into_group_a():
+        """Verify that the factory image boots from its committed A group."""
         with subtest("v1: the initial image boots into group a"):
             wait_ssh()
             info = boot_info()
             assert info["activeGroup"] == "a" and info["defaultGroup"] == "a", info
             ssh("test -f /boot/EFI/Linux/nixos-a.efi")
 
+    def test_management_services_and_install_app():
+        """Verify management services and the complete container app lifecycle."""
+        with subtest("Rugix Admin and Nexigon provisioning are available"):
+            ssh("systemctl is-active --quiet rugix-admin.service")
+            ssh("curl --fail --silent http://127.0.0.1:7492/ >/dev/null")
+            ssh("curl --fail --silent http://127.0.0.1:6947/ | grep -q ready")
+
+        with subtest("Docker Compose is available as a declared runtime capability"):
+            server.wait_until_succeeds(
+                "ssh-to-appliance -- docker info >/dev/null", timeout=120
+            )
+            ssh("systemctl is-active --quiet docker.service")
+            ssh("docker compose version")
+            ssh("grep -q 'runtime.docker-compose' /etc/rugix/components/docker-compose.toml")
+
+        with subtest("the bundled Python image installs without registry access"):
+            assert not ssh("docker image ls -q").strip()
+            ssh("ip route replace unreachable default")
+            install_app(1)
+            assert_app("1.0.0", 1)
+            image_metadata = json.loads(ssh(
+                "cat /var/lib/rugix/apps/python-web-server/generations/1/images/rugix-images.json"
+            ))
+            bundled_image = image_metadata["images"][0]
+            assert bundled_image["source"] == "docker-archive", bundled_image
+            tag = bundled_image["bundleTag"]
+            assert tag.startswith("localhost/rugix-apps/python-web-server/image-0:m-"), tag
+            ssh(f"docker image inspect {tag}")
+
+        with subtest("the app updates, rolls back, and retains persistent data"):
+            install_app(2)
+            assert_app("2.0.0", 2)
+            rollback_app()
+            assert_app("1.0.0", 1)
+            activate_app(2)
+            assert_app("2.0.0", 2)
+
     def test_full_bundle_switches_to_group_b():
+        """Verify full system update trial, rollback, commit, and app recovery."""
         with subtest("v2: installing the full bundle switches to group b"):
             install_update("http://update-server/update.rugixb")
-            ssh("test -f /boot/EFI/Linux/nixos-b.efi")  # spare slot now populated
+            ssh("test -f /boot/EFI/Linux/nixos-b.efi")
+            # A trial boot must not change the committed slot. Reboot without
+            # committing and verify that systemd-boot returns to the old image.
+            reboot_into_spare()
+            assert boot_info()["activeGroup"] == "b"
+            assert boot_info()["defaultGroup"] == "a"
+            server.execute("ssh-to-appliance -- systemctl reboot", timeout=20)
+            server.sleep(15)
+            wait_ssh()
+            assert boot_info()["activeGroup"] == "a"
+            assert boot_info()["defaultGroup"] == "a"
             reboot_and_commit(expected_group="b")
+            assert_app("2.0.0", 2)
+            ssh("systemctl is-active --quiet rugix-admin.service")
 
     def test_delta_bundle_switches_back_to_group_a():
+        """Verify the delta system update and container app recovery in group A."""
         with subtest("v3: installing the delta bundle switches back to group a"):
             install_update("http://update-server/update-delta.rugixb")
             reboot_and_commit(expected_group="a")
+            assert_app("2.0.0", 2)
+            ssh("curl --fail --silent http://127.0.0.1:6947/ | grep -q ready")
 
 
-    # ── Bring the VMs up and run the scenario ───────────────────────────
-    # allow_reboot=True: the appliance reboots itself during the lifecycle;
-    # without it the driver's default -no-reboot would terminate qemu.
-    appliance.start(allow_reboot=True)
-    server.start()
-
-    server.wait_for_unit("multi-user.target")
-    server.wait_for_unit("nginx.service")
-    server.wait_for_unit("dnsmasq.service")
-    server.wait_for_open_port(80)
-
-    # The SSH helper key only lives in the test's nix store, so push it onto
-    # the server — the only machine that talks to the appliance.
-    server.succeed("install -m 600 ${./test-key} /root/test-key")
-
-    test_server_hosts_both_bundles()
+    start_demo()
+    test_server_hosts_all_bundles()
     test_initial_image_boots_into_group_a()
+    test_management_services_and_install_app()
     test_full_bundle_switches_to_group_b()
     test_delta_bundle_switches_back_to_group_a()
   '';
