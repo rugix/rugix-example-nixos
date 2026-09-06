@@ -8,6 +8,9 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     rugix.url = "github:rugix/rugix";
+
+    treefmt-nix.url = "github:numtide/treefmt-nix";
+    treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
   };
 
   outputs =
@@ -31,6 +34,19 @@
       rugix-bundle = p: p.config.system.build.rugix-bundle;
 
       rugixOverlay = inputs.rugix.overlays.default;
+
+      treefmtEval =
+        pkgs:
+        inputs.treefmt-nix.lib.evalModule pkgs {
+          projectRootFile = "flake.nix";
+          programs = {
+            deadnix.enable = true;
+            nixfmt.enable = true;
+            prettier.enable = true;
+            shfmt.enable = true;
+            statix.enable = true;
+          };
+        };
     in
     {
       packages = forEachSystem (
@@ -75,26 +91,36 @@
                   $out/update.rugixb
               '';
 
-          # v2: serves the v3 delta bundle via lighttpd.
           defaultImage2 = extendConfiguration defaultImage {
             system.image.version = "2";
-            services.lighttpd = {
-              enable = true;
-              document-root = v3-delta-bundle;
-            };
           };
+
+          # Test variants: same appliance, plus SSH + headless boot, so the
+          # NixOS integration test can drive `rugix-ctrl` over the network.
+          testImage = extendConfiguration defaultImage ./system-configuration/test-extras.nix;
+          testImage3 = extendConfiguration testImage {
+            system.image.version = "3";
+          };
+          testImage2 = extendConfiguration testImage {
+            system.image.version = "2";
+          };
+          v2-full-bundle-test = rugix-bundle testImage2;
+          v3-full-bundle-test = rugix-bundle testImage3;
+          v3-delta-bundle-test =
+            pkgs.runCommand "rugix-delta-v2-v3-test"
+              {
+                nativeBuildInputs = [ inputs.rugix.packages.${linuxSystem}.rugix-bundler ];
+              }
+              ''
+                mkdir -p $out
+                rugix-bundler delta \
+                  ${v2-full-bundle-test}/update.rugixb \
+                  ${v3-full-bundle-test}/update.rugixb \
+                  $out/update.rugixb
+              '';
 
         in
         {
-          run-image = pkgs.callPackage ./run-image.nix {
-            # macOS: Use linux-builder to build OVMF
-            OVMF =
-              if pkgs.stdenv.isLinux then
-                pkgs.OVMF
-              else
-                (import inputs.nixpkgs { system = toLinux system; }).OVMF;
-          };
-
           image-v1 = image defaultImage;
           image-v1-x86_64 = image (
             extendConfiguration defaultImage {
@@ -121,90 +147,76 @@
 
           update-v3 = rugix-bundle defaultImage3;
           update-v3-delta = v3-delta-bundle;
+
+          image-test = image testImage;
+          update-v2-test = v2-full-bundle-test;
+          update-v3-delta-test = v3-delta-bundle-test;
         }
       );
 
-      checks = inputs.self.packages;
+      formatter = forEachSystem (_system: pkgs: (treefmtEval pkgs).config.build.wrapper);
 
+      checks = forEachSystem (
+        system: pkgs:
+        inputs.self.packages.${system}
+        // {
+          formatting = (treefmtEval pkgs).config.build.check inputs.self;
+        }
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          update-test = pkgs.testers.runNixOSTest (
+            import ./tests/update.nix {
+              inherit pkgs;
+              inherit (inputs.self.packages.${system}) image-test;
+              v2-bundle = inputs.self.packages.${system}.update-v2-test;
+              v3-delta-bundle = inputs.self.packages.${system}.update-v3-delta-test;
+            }
+          );
+        }
+      );
+
+      # Interactive driver for the integration test: boots the server +
+      # appliance VMs and drops into a Python REPL where the user can
+      # ssh from server → appliance, install bundles, reboot, etc.
       apps = forEachSystem (
         system: pkgs:
-        let
-          inherit (inputs.self.packages.${system}) run-image;
+        lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
+          let
+            driver = inputs.self.checks.${system}.update-test.driverInteractive;
+            wrapper = pkgs.writeShellScriptBin "rugix-demo" ''
+              cat <<'EOF'
 
-          vm-demo =
-            arch:
-            let
-              demoSystem = "${arch}-linux";
-              inherit (inputs.nixpkgs.legacyPackages.${demoSystem}) OVMF;
-            in
-            {
-              type = "app";
-              program =
-                let
-                  appl = extendConfiguration inputs.self.nixosConfigurations.appliance {
-                    nixpkgs = {
-                      buildPlatform = toLinux system;
-                      hostPlatform = demoSystem;
-                    };
-                    system.image.version = "1";
-                    services.lighttpd = {
-                      enable = true;
-                      document-root = inputs.self.packages.${system}.update-v2;
-                    };
-                  };
+              ── Rugix A/B OTA update — interactive demo ───────────────────────
 
-                in
-                builtins.toString (
-                  pkgs.writeShellScript "vm-demo" ''
-                    ${
-                      run-image.override {
-                        targetArch = arch;
-                        inherit OVMF;
-                      }
-                    }/bin/run-image ${image appl}/appliance_1.raw
-                  ''
-                );
-            };
-        in
-        let
-          # Automated headless test for the Rugix A/B update flow.
-          # Builds the demo image, boots it in QEMU, and runs the full lifecycle.
-          test-vm =
-            let
-              demoSystem = "${pkgs.stdenv.hostPlatform.qemuArch}-linux";
-              appl = extendConfiguration inputs.self.nixosConfigurations.appliance {
-                nixpkgs = {
-                  buildPlatform = toLinux system;
-                  hostPlatform = demoSystem;
-                };
-                system.image.version = "1";
-                services.lighttpd = {
-                  enable = true;
-                  document-root = inputs.self.packages.${system}.update-v2;
-                };
-              };
-            in
-            {
+                Two VMs come up: 'server' (nginx serving update bundles) and
+                'appliance' (the NixOS A/B image).
+
+                Bundles served by the server (resolved via dnsmasq):
+                  http://update-server/update.rugixb        (v2 full)
+                  http://update-server/update-delta.rugixb  (v3 delta)
+
+                Useful REPL calls (after start_all()):
+                  wait_ssh()
+                  ssh("rugix-ctrl system info")
+                  install_update("http://update-server/update.rugixb")
+                  reboot_and_commit("b")
+                  appliance.shell_interact()      # serial console
+                  server.shell_interact()
+
+              ──────────────────────────────────────────────────────────────────
+
+              EOF
+              exec ${driver}/bin/nixos-test-driver "$@"
+            '';
+            demo = {
               type = "app";
-              program =
-                builtins.toString (
-                  pkgs.callPackage ./test-vm.nix {
-                    image = image appl;
-                    OVMF = inputs.nixpkgs.legacyPackages.${demoSystem}.OVMF;
-                    v2-bundle = inputs.self.packages.${system}.update-v2;
-                    v3-delta-bundle = inputs.self.packages.${system}.update-v3-delta;
-                    v3-full-bundle = inputs.self.packages.${system}.update-v3;
-                  }
-                )
-                + "/bin/test-vm";
+              program = "${wrapper}/bin/rugix-demo";
             };
-        in
-        {
-          inherit test-vm;
-          default = inputs.self.apps.${system}."vm-demo-${pkgs.stdenv.hostPlatform.qemuArch}";
-          vm-demo-x86_64 = vm-demo "x86_64";
-          vm-demo-aarch64 = vm-demo "aarch64";
-        }
+          in
+          {
+            inherit demo;
+            default = demo;
+          }
+        )
       );
 
       # debug image size on this as shown in:
