@@ -364,6 +364,22 @@ appropriate for this example, not for a production web workload.
 Rugix Admin remains loopback-only, and the privileged daemon exposes only the
 operations explicitly enabled in `system-configuration/update.nix`.
 
+## Collaboration
+
+This example is a collaboration between
+[Applicative Systems](https://applicative.systems/) and
+[Silitics](https://silitics.com/), the company behind Rugix and Nexigon. It builds
+on Applicative Systems' original
+[NixOS appliance and A/B update demonstrator](https://github.com/applicative-systems/nixos-appliance-ota-update)
+using systemd-sysupdate, adapted here for Rugix.
+
+## Commercial Support
+
+For help adapting this example to your hardware or product, including NixOS
+integration, OTA updates, and fleet management, contact
+[Applicative Systems](https://applicative.systems/) or
+[Silitics](mailto:hello@silitics.com).
+
 ## References
 
 - [Rugix documentation](https://rugix.org/docs/)
