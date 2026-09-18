@@ -7,7 +7,7 @@
     nexigon = {
       # GitHub's source-archive endpoint does not expose this repository,
       # while its public Git repository does.
-      url = "git+https://github.com/nexigon/nexigon.git?rev=4a838dd26b6a8c6dab2598c1bedc995f18381ae4";
+      url = "git+https://github.com/nexigon/nexigon.git?ref=refs/tags/v0.6.0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     rugix = {
