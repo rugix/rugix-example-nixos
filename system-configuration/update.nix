@@ -68,6 +68,13 @@
       openFirewall = true;
     };
     settings = {
+      # Install system updates and manage apps with Rugix Ctrl. Devices wait for
+      # the `dev.nexigon.ota.config` and `dev.nexigon.rugix-apps.config`
+      # properties, which select the releases in Nexigon Hub.
+      integrations.rugix = {
+        system-updates.enabled = true;
+        apps.enabled = true;
+      };
       exports = [
         {
           protocol = "http";

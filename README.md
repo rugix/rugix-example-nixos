@@ -12,8 +12,8 @@ system. The example includes:
 - Images, system updates, and application bundles for x86-64 and AArch64
 
 The example is based on NixOS 26.05 and builds the complete stack from source.
-It consumes the upstream flakes for Rugix revision `e9c3a26`, Nexigon revision
-`4a838dd`, and Rugix Admin revision `1812c99`. Their nixpkgs
+It consumes the upstream flakes for Rugix revision `e9c3a26`, Nexigon Agent
+0.7.0, and Rugix Admin revision `1812c99`. Their nixpkgs
 inputs follow this example's NixOS 26.05 pin, so the project uses one package set.
 Rugix Admin's flake builds both its frontend and Rust service from source and
 manages its Sidex code generator dependency.
@@ -55,7 +55,9 @@ layout deliberately has no Rugix data or configuration partition.
 The Nexigon Agent starts without credentials and exposes its pairing endpoint on
 port 6947. After pairing, it connects to Nexigon and exports loopback-only Rugix
 Admin and the example Python web app through Nexigon's secure remote access
-path.
+path. Its system update and Rugix Apps integrations install the system and app
+releases that you select for the device in Nexigon Hub, through the same Rugix
+Ctrl as the local workflow.
 
 ## Run the Interactive Demo
 
@@ -131,8 +133,10 @@ Before pairing, check the provisioning endpoint with:
 server.succeed("curl --fail http://192.168.1.100:6947/")
 ```
 
-After pairing, the endpoint closes and the agent connects to Nexigon. Useful
-service checks from the interactive driver include:
+After pairing, the endpoint closes and the agent connects to Nexigon. From then
+on, the agent commits a newly booted system on its next update check, as a
+device in the field would. Try a fallback without committing before you pair
+the appliance. Useful service checks from the interactive driver include:
 
 ```python
 ssh("curl --fail http://127.0.0.1:7492/")
